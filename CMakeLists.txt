@@ -33,7 +33,17 @@ add_executable(main main.cpp)
 
 link_directories(${LLVM_LIBRARY_DIRS})
 target_link_libraries(main PUBLIC ${EXTRA_LIBS} LLVMSupport LLVMCore)
-
 target_include_directories(main PUBLIC "${PROJECT_BINARY_DIR}")
+set_target_properties(main PROPERTIES LINK_FLAGS "-Wl,--disable-new-dtags"
+                                      INSTALL_RPATH "${LLVM_LIBRARY_DIRS}")
+
+################################
+#### Install
+################################
 set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/install)
-install(TARGETS main DESTINATION bin)
+# add the automatically determined parts of the RPATH
+# which point to directories outside the build tree to the install RPATH
+message("INSTALL_RPATH : " ${INSTALL_RPATH})
+message("BUILD_RPATH : "  ${BUILD_RPATH})
+
+install(TARGETS main RUNTIME DESTINATION bin)
