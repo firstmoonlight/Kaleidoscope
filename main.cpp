@@ -5,36 +5,31 @@
 #include "parser/parser.h"
 #include "parser/ast.h"
 
-void InitializeModuleAndManagers() {
-  // Create new pass and analysis managers.
-  TheFPM = std::make_unique<llvm::FunctionPassManager>();
-  TheLAM = std::make_unique<llvm::LoopAnalysisManager>();
-  TheFAM = std::make_unique<llvm::FunctionAnalysisManager>();
-  TheCGAM = std::make_unique<llvm::CGSCCAnalysisManager>();
-  TheMAM = std::make_unique<llvm::ModuleAnalysisManager>();
-  ThePIC = std::make_unique<llvm::PassInstrumentationCallbacks>();
-  TheSI = std::make_unique<llvm::StandardInstrumentations>(TheContext,
-                                                     /*DebugLogging*/ true);
-  TheSI->registerCallbacks(*ThePIC, TheMAM.get());
+//===----------------------------------------------------------------------===//
+// "Library" functions that can be "extern'd" from user code.
+//===----------------------------------------------------------------------===//
+#ifdef _WIN32
+#define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT
+#endif
 
-  // Add transform passes.
-  // Do simple "peephole" optimizations and bit-twiddling optzns.
-  TheFPM->addPass(llvm::InstCombinePass());
-  // Reassociate expressions.
-  TheFPM->addPass(llvm::ReassociatePass());
-  // Eliminate Common SubExpressions.
-  TheFPM->addPass(llvm::GVNPass());
-  // Simplify the control flow graph (deleting unreachable blocks, etc).
-  TheFPM->addPass(llvm::SimplifyCFGPass());
+/// putchard - putchar that takes a double and returns 0.
+extern "C" DLLEXPORT double putchard(double X) {
+  fputc((char)X, stderr);
+  return 0;
+}
 
-  // Register analysis passes used in these transform passes.
-  llvm::PassBuilder PB;
-  PB.registerModuleAnalyses(*TheMAM);
-  PB.registerFunctionAnalyses(*TheFAM);
-  PB.crossRegisterProxies(*TheLAM, *TheFAM, *TheCGAM, *TheMAM);
+/// printd - printf that takes a double prints it as "%f\n", returning 0.
+extern "C" DLLEXPORT double printd(double X) {
+  fprintf(stderr, "%f\n", X);
+  return 0;
 }
 
 int main() {
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  llvm::InitializeNativeTargetAsmParser();
   // Install standard binary operators.
   // 1 is lowest precedence.
   BinopPrecedence['<'] = 10;
@@ -46,15 +41,14 @@ int main() {
   fprintf(stderr, "ready> ");
   getNextToken();
 
-  // Make the module, which holds all the code.
-  TheModule = std::make_unique<llvm::Module>("my cool jit", TheContext);
+  TheJIT = ExitOnErr(llvm::orc::KaleidoscopeJIT::Create());
   InitializeModuleAndManagers();
 
   // Run the main "interpreter loop" now.
   MainLoop();
 
   // Print out all of the generated code.
-  TheModule->print(llvm::errs(), nullptr);
+//   TheModule->print(llvm::errs(), nullptr);
 
   return 0;
 }

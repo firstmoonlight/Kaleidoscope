@@ -2,13 +2,15 @@
 #include "logger.h"
 
 // This is an object that owns LLVM core data structures
-llvm::LLVMContext TheContext;
+std::unique_ptr<llvm::LLVMContext> TheContext;
 // This is a helper object that makes easy to generate LLVM instructions
-llvm::IRBuilder<> Builder(TheContext);
+std::unique_ptr<llvm::IRBuilder<>> Builder;
 // This is an LLVM construct that contains functions and global variables
 std::unique_ptr<llvm::Module> TheModule;
 // This map keeps track of which values are defined in the current scope
 std::map<std::string, llvm::Value *> NamedValues;
+
+std::unique_ptr<llvm::orc::KaleidoscopeJIT> TheJIT;
 
 std::unique_ptr<llvm::FunctionPassManager> TheFPM;
 std::unique_ptr<llvm::LoopAnalysisManager> TheLAM;
@@ -18,10 +20,10 @@ std::unique_ptr<llvm::ModuleAnalysisManager> TheMAM;
 std::unique_ptr<llvm::PassInstrumentationCallbacks> ThePIC;
 std::unique_ptr<llvm::StandardInstrumentations> TheSI;
 std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
-static llvm::ExitOnError ExitOnErr;
+llvm::ExitOnError ExitOnErr;
 
 llvm::Value *NumberExprAST::codegen() {
-  return llvm::ConstantFP::get(TheContext, llvm::APFloat(Val));
+  return llvm::ConstantFP::get(*TheContext, llvm::APFloat(Val));
 }
 
 llvm::Value *VariableExprAST::codegen() {
@@ -40,24 +42,39 @@ llvm::Value *BinaryExprAST::codegen() {
 
   switch (Op) {
   case '+':
-    return Builder.CreateFAdd(L, R, "addtmp");
+    return Builder->CreateFAdd(L, R, "addtmp");
   case '-':
-    return Builder.CreateFSub(L, R, "subtmp");
+    return Builder->CreateFSub(L, R, "subtmp");
   case '*':
-    return Builder.CreateFMul(L, R, "multmp");
+    return Builder->CreateFMul(L, R, "multmp");
   case '<':
-    L = Builder.CreateFCmpULT(L, R, "cmptmp");
+    L = Builder->CreateFCmpULT(L, R, "cmptmp");
     // Convert bool 0/1 to double 0.0 or 1.0
-    return Builder.CreateUIToFP(L, llvm::Type::getDoubleTy(TheContext),
+    return Builder->CreateUIToFP(L, llvm::Type::getDoubleTy(*TheContext),
                                  "booltmp");
   default:
     return LogErrorV("invalid binary operator");
   }
 }
 
+llvm::Function *getFunction(std::string Name) {
+  // First, see if the function has already been added to the current module.
+  if (auto *F = TheModule->getFunction(Name))
+    return F;
+
+  // If not, check whether we can codegen the declaration from some existing
+  // prototype.
+  auto FI = FunctionProtos.find(Name);
+  if (FI != FunctionProtos.end())
+    return FI->second->codegen();
+
+  // If no existing prototype exists, return null.
+  return nullptr;
+}
+
 llvm::Value *CallExprAST::codegen() {
   // Look up the name in the global module table.
-  llvm::Function *CalleeF = TheModule->getFunction(Callee);
+  llvm::Function *CalleeF = getFunction(Callee);
   if (!CalleeF)
     return LogErrorV("Unknown function referenced");
 
@@ -72,14 +89,14 @@ llvm::Value *CallExprAST::codegen() {
       return nullptr;
   }
 
-  return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
+  return Builder->CreateCall(CalleeF, ArgsV, "calltmp");
 }
 
 llvm::Function *PrototypeAST::codegen() {
   // Make the function type:  double(double,double) etc.
-  std::vector<llvm::Type *> Doubles(Args.size(), llvm::Type::getDoubleTy(TheContext));
+  std::vector<llvm::Type *> Doubles(Args.size(), llvm::Type::getDoubleTy(*TheContext));
   llvm::FunctionType *FT =
-      llvm::FunctionType::get(llvm::Type::getDoubleTy(TheContext), Doubles, false);
+      llvm::FunctionType::get(llvm::Type::getDoubleTy(*TheContext), Doubles, false);
 
   llvm::Function *F =
       llvm::Function::Create(FT, llvm::Function::ExternalLinkage, Name, TheModule.get());
@@ -93,8 +110,11 @@ llvm::Function *PrototypeAST::codegen() {
 }
 
 llvm::Function *FunctionAST::codegen() {
-  // First, check for an existing function from a previous 'extern' declaration.
-  llvm::Function *TheFunction = TheModule->getFunction(Proto->getName());
+  // Transfer ownership of the prototype to the FunctionProtos map, but keep a
+  // reference to it for use below.
+  auto& P = *Proto;
+  FunctionProtos[Proto->getName()] = std::move(Proto);
+  llvm::Function *TheFunction = getFunction(P.getName());
 
   if (!TheFunction)
     TheFunction = Proto->codegen();
@@ -103,8 +123,8 @@ llvm::Function *FunctionAST::codegen() {
     return nullptr;
 
   // Create a new basic block to start insertion into.
-  llvm::BasicBlock *BB = llvm::BasicBlock::Create(TheContext, "entry", TheFunction);
-  Builder.SetInsertPoint(BB);
+  llvm::BasicBlock *BB = llvm::BasicBlock::Create(*TheContext, "entry", TheFunction);
+  Builder->SetInsertPoint(BB);
 
   // Record the function arguments in the NamedValues map.
   NamedValues.clear();
@@ -113,7 +133,7 @@ llvm::Function *FunctionAST::codegen() {
 
   if (llvm::Value *RetVal = Body->codegen()) {
     // Finish off the function.
-    Builder.CreateRet(RetVal);
+    Builder->CreateRet(RetVal);
 
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
