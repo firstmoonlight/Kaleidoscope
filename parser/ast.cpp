@@ -10,6 +10,16 @@ std::unique_ptr<llvm::Module> TheModule;
 // This map keeps track of which values are defined in the current scope
 std::map<std::string, llvm::Value *> NamedValues;
 
+std::unique_ptr<llvm::FunctionPassManager> TheFPM;
+std::unique_ptr<llvm::LoopAnalysisManager> TheLAM;
+std::unique_ptr<llvm::FunctionAnalysisManager> TheFAM;
+std::unique_ptr<llvm::CGSCCAnalysisManager> TheCGAM;
+std::unique_ptr<llvm::ModuleAnalysisManager> TheMAM;
+std::unique_ptr<llvm::PassInstrumentationCallbacks> ThePIC;
+std::unique_ptr<llvm::StandardInstrumentations> TheSI;
+std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
+static llvm::ExitOnError ExitOnErr;
+
 llvm::Value *NumberExprAST::codegen() {
   return llvm::ConstantFP::get(TheContext, llvm::APFloat(Val));
 }
@@ -107,6 +117,9 @@ llvm::Function *FunctionAST::codegen() {
 
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
+
+    // Optimize the function.
+    TheFPM->run(*TheFunction, *TheFAM);
 
     return TheFunction;
   }

@@ -10,12 +10,24 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/StandardInstrumentations.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/Reassociate.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include <string>
 #include <memory>
 #include <vector>
 #include <map>
+
+class PrototypeAST;
 
 // This is an object that owns LLVM core data structures
 extern llvm::LLVMContext TheContext;
@@ -25,6 +37,15 @@ extern llvm::IRBuilder<> Builder;
 extern std::unique_ptr<llvm::Module> TheModule;
 // This map keeps track of which values are defined in the current scope
 extern std::map<std::string, llvm::Value *> NamedValues;
+
+extern std::unique_ptr<llvm::FunctionPassManager> TheFPM;
+extern std::unique_ptr<llvm::LoopAnalysisManager> TheLAM;
+extern std::unique_ptr<llvm::FunctionAnalysisManager> TheFAM;
+extern std::unique_ptr<llvm::CGSCCAnalysisManager> TheCGAM;
+extern std::unique_ptr<llvm::ModuleAnalysisManager> TheMAM;
+extern std::unique_ptr<llvm::PassInstrumentationCallbacks> ThePIC;
+extern std::unique_ptr<llvm::StandardInstrumentations> TheSI;
+extern std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
 /// ExprAST - Base class for all expression nodes.
 class ExprAST {

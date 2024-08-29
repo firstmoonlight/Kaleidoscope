@@ -32,7 +32,7 @@ list(APPEND EXTRA_LIBS Parser Lexer)
 add_executable(main main.cpp)
 
 link_directories(${LLVM_LIBRARY_DIRS})
-target_link_libraries(main PUBLIC ${EXTRA_LIBS} LLVMSupport LLVMCore)
+target_link_libraries(main PUBLIC ${EXTRA_LIBS} LLVMSupport LLVMCore LLVMTransformUtils LLVMAnalysis  LLVMScalarOpts LLVMPasses LLVMInstCombine)
 target_include_directories(main PUBLIC "${PROJECT_BINARY_DIR}")
 set_target_properties(main PROPERTIES LINK_FLAGS "-Wl,--disable-new-dtags"
                                       INSTALL_RPATH "${LLVM_LIBRARY_DIRS}")
