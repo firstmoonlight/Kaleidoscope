@@ -2,7 +2,6 @@
 #define __LEXER_H__
 #include <string>
 
-
 extern std::string IdentifierStr; // Filled in if tok_identifier
 extern double NumVal;             // Filled in if tok_number
 
@@ -17,7 +16,12 @@ enum Token {
 
   // primary
   tok_identifier = -4,
-  tok_number = -5
+  tok_number = -5,
+
+  // control
+  tok_if = -6,
+  tok_then = -7,
+  tok_else = -8,
 };
 
 int gettok();
