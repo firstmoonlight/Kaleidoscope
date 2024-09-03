@@ -22,6 +22,11 @@ std::unique_ptr<llvm::StandardInstrumentations> TheSI;
 std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 llvm::ExitOnError ExitOnErr;
 
+/// BinopPrecedence - This holds the precedence for each binary operator that is
+/// defined.
+std::map<char, int> BinopPrecedence;
+
+
 llvm::Value *NumberExprAST::codegen() {
   return llvm::ConstantFP::get(*TheContext, llvm::APFloat(Val));
 }
@@ -32,6 +37,33 @@ llvm::Value *VariableExprAST::codegen() {
   if (!V)
     LogErrorV("Unknown variable name");
   return V;
+}
+
+llvm::Function *getFunction(std::string Name) {
+  // First, see if the function has already been added to the current module.
+  if (auto *F = TheModule->getFunction(Name))
+    return F;
+
+  // If not, check whether we can codegen the declaration from some existing
+  // prototype.
+  auto FI = FunctionProtos.find(Name);
+  if (FI != FunctionProtos.end())
+    return FI->second->codegen();
+
+  // If no existing prototype exists, return null.
+  return nullptr;
+}
+
+llvm::Value *UnaryExprAST::codegen() {
+  llvm::Value *OperandV = Operand->codegen();
+  if (!OperandV)
+    return nullptr;
+
+  llvm::Function *F = getFunction(std::string("unary") + Opcode);
+  if (!F)
+    return LogErrorV("Unknown unary operator");
+
+  return Builder->CreateCall(F, OperandV, "unop");
 }
 
 llvm::Value *BinaryExprAST::codegen() {
@@ -53,23 +85,16 @@ llvm::Value *BinaryExprAST::codegen() {
     return Builder->CreateUIToFP(L, llvm::Type::getDoubleTy(*TheContext),
                                  "booltmp");
   default:
-    return LogErrorV("invalid binary operator");
+    break;
   }
-}
 
-llvm::Function *getFunction(std::string Name) {
-  // First, see if the function has already been added to the current module.
-  if (auto *F = TheModule->getFunction(Name))
-    return F;
+  // If it wasn't a builtin binary operator, it must be a user defined one. Emit
+  // a call to it.
+  llvm::Function* F = getFunction(std::string("binary") + Op);
+  assert(F && "binary operator not found");
 
-  // If not, check whether we can codegen the declaration from some existing
-  // prototype.
-  auto FI = FunctionProtos.find(Name);
-  if (FI != FunctionProtos.end())
-    return FI->second->codegen();
-
-  // If no existing prototype exists, return null.
-  return nullptr;
+  llvm::Value *Ops[2] = {L, R};
+  return Builder->CreateCall(F, Ops, "binop");
 }
 
 llvm::Value *CallExprAST::codegen() {
@@ -117,10 +142,11 @@ llvm::Function *FunctionAST::codegen() {
   llvm::Function *TheFunction = getFunction(P.getName());
 
   if (!TheFunction)
-    TheFunction = Proto->codegen();
-
-  if (!TheFunction)
     return nullptr;
+
+  // If this is an operator, install it.
+  if (P.isBinaryOp())
+    BinopPrecedence[P.getOperatorName()] = P.getBinaryPrecedence();
 
   // Create a new basic block to start insertion into.
   llvm::BasicBlock *BB = llvm::BasicBlock::Create(*TheContext, "entry", TheFunction);
@@ -146,6 +172,8 @@ llvm::Function *FunctionAST::codegen() {
 
   // Error reading body, remove function.
   TheFunction->eraseFromParent();
+   if (P.isBinaryOp())
+    BinopPrecedence.erase(P.getOperatorName());
   return nullptr;
 }
 
