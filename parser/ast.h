@@ -37,7 +37,7 @@ extern std::unique_ptr<llvm::IRBuilder<>> Builder;
 // This is an LLVM construct that contains functions and global variables
 extern std::unique_ptr<llvm::Module> TheModule;
 // This map keeps track of which values are defined in the current scope
-extern std::map<std::string, llvm::Value *> NamedValues;
+extern std::map<std::string, llvm::AllocaInst *> NamedValues;
 
 extern std::unique_ptr<llvm::orc::KaleidoscopeJIT> TheJIT;
 
