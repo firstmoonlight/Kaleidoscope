@@ -1,6 +1,7 @@
 #include "lexer/lexer.h"
 #include "parser.h"
 #include "ast.h"
+#include "lexer/dbg.h"
 
 //===----------------------------------------------------------------------===//
 // Parser
@@ -67,10 +68,12 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
 static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   std::string IdName = IdentifierStr;
 
+  SourceLocation LitLoc = CurLoc;
+
   getNextToken(); // eat identifier.
 
   if (CurTok != '(') // Simple variable ref.
-    return std::make_unique<VariableExprAST>(IdName);
+    return std::make_unique<VariableExprAST>(LitLoc, IdName);
 
   // Call.
   getNextToken(); // eat (
@@ -94,11 +97,13 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   // Eat the ')'.
   getNextToken();
 
-  return std::make_unique<CallExprAST>(IdName, std::move(Args));
+  return std::make_unique<CallExprAST>(LitLoc, IdName, std::move(Args));
 }
 
 /// ifexpr ::= 'if' expression 'then' expression 'else' expression
 static std::unique_ptr<ExprAST> ParseIfExpr() {
+  SourceLocation IfLoc = CurLoc;
+  
   getNextToken();  // eat the if.
 
   // condition.
@@ -123,7 +128,7 @@ static std::unique_ptr<ExprAST> ParseIfExpr() {
   if (!Else)
     return nullptr;
 
-  return std::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
+  return std::make_unique<IfExprAST>(IfLoc, std::move(Cond), std::move(Then),
                                       std::move(Else));
 }
 
@@ -276,6 +281,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 
     // Okay, we know this is a binop.
     int BinOp = CurTok;
+    SourceLocation BinLoc = CurLoc;
     getNextToken(); // eat binop
 
     // Parse the primary expression after the binary operator.
@@ -294,7 +300,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 
     // Merge LHS/RHS.
     LHS =
-        std::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
+        std::make_unique<BinaryExprAST>(BinLoc, BinOp, std::move(LHS), std::move(RHS));
   }
 }
 
@@ -315,6 +321,8 @@ static std::unique_ptr<ExprAST> ParseExpression() {
 ///   ::= unary LETTER (id)
 static std::unique_ptr<PrototypeAST> ParsePrototype() {
   std::string FnName;
+
+  SourceLocation FnLoc = CurLoc;
 
   unsigned Kind = 0; // 0 = identifier, 1 = unary, 2 = binary.
   unsigned BinaryPrecedence = 30;
@@ -372,7 +380,7 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
   if (Kind && ArgNames.size() != Kind)
     return LogErrorP("Invalid number of operands for operator");
 
-  return std::make_unique<PrototypeAST>(FnName, ArgNames, Kind != 0,
+  return std::make_unique<PrototypeAST>(FnLoc, FnName, ArgNames, Kind != 0,
                                          BinaryPrecedence);
 }
 
@@ -390,9 +398,10 @@ std::unique_ptr<FunctionAST> ParseDefinition() {
 
 /// toplevelexpr ::= expression
 std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
+  SourceLocation FnLoc = CurLoc;
   if (auto E = ParseExpression()) {
     // Make an anonymous proto.
-    auto Proto = std::make_unique<PrototypeAST>("__anon_expr",
+    auto Proto = std::make_unique<PrototypeAST>(FnLoc, "main",
                                                 std::vector<std::string>());
     return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
   }
@@ -417,48 +426,12 @@ void InitializeModuleAndManagers() {
 
   // Create a new builder for the module.
   Builder = std::make_unique<llvm::IRBuilder<>>(*TheContext);
-
-  // Create new pass and analysis managers.
-  TheFPM = std::make_unique<llvm::FunctionPassManager>();
-  TheLAM = std::make_unique<llvm::LoopAnalysisManager>();
-  TheFAM = std::make_unique<llvm::FunctionAnalysisManager>();
-  TheCGAM = std::make_unique<llvm::CGSCCAnalysisManager>();
-  TheMAM = std::make_unique<llvm::ModuleAnalysisManager>();
-  ThePIC = std::make_unique<llvm::PassInstrumentationCallbacks>();
-  TheSI = std::make_unique<llvm::StandardInstrumentations>(*TheContext,
-                                                     /*DebugLogging*/ true);
-  TheSI->registerCallbacks(*ThePIC, TheMAM.get());
-
-//   TheFPM->add(llvm::createPromoteMemoryToRegisterPass());
-  // Add transform passes.
-  // Do simple "peephole" optimizations and bit-twiddling optzns.
-  TheFPM->addPass(llvm::InstCombinePass());
-  // Reassociate expressions.
-  TheFPM->addPass(llvm::ReassociatePass());
-  // Eliminate Common SubExpressions.
-  TheFPM->addPass(llvm::GVNPass());
-  // Simplify the control flow graph (deleting unreachable blocks, etc).
-  TheFPM->addPass(llvm::SimplifyCFGPass());
-
-
-
-  // Register analysis passes used in these transform passes.
-  llvm::PassBuilder PB;
-  PB.registerModuleAnalyses(*TheMAM);
-  PB.registerFunctionAnalyses(*TheFAM);
-  PB.crossRegisterProxies(*TheLAM, *TheFAM, *TheCGAM, *TheMAM);
 }
 
 void HandleDefinition() {
   if (auto FnAST = ParseDefinition()) {
-    if (auto *FnIR = FnAST->codegen()) {
-      fprintf(stderr, "Read function definition:\n");
-      FnIR->print(llvm::errs());
-      fprintf(stderr, "\n");
-      ExitOnErr(TheJIT->addModule(
-          llvm::orc::ThreadSafeModule(std::move(TheModule), std::move(TheContext))));
-      InitializeModuleAndManagers();
-    }
+    if (!FnAST->codegen())
+      fprintf(stderr, "Error reading function definition:");
   } else {
     // Skip token for error recovery.
     getNextToken();
@@ -467,11 +440,8 @@ void HandleDefinition() {
 
 void HandleExtern() {
   if (auto ProtoAST = ParseExtern()) {
-    if (auto *FnIR = ProtoAST->codegen()) {
-      fprintf(stderr, "Read extern: \n");
-      FnIR->print(llvm::errs());
-      fprintf(stderr, "\n");
-      FunctionProtos[ProtoAST->getName()] = std::move(ProtoAST);
+    if (!ProtoAST->codegen()) {
+      fprintf(stderr, "Error reading extern");
     }
   } else {
     // Skip token for error recovery.
@@ -482,28 +452,8 @@ void HandleExtern() {
 void HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
   if (auto FnAST = ParseTopLevelExpr()) {
-    if (auto *FnIR = FnAST->codegen()) {
-    //   fprintf(stderr, "Read top-level expression:\n");
-    //   FnIR->print(llvm::errs());
-      // Create a ResourceTracker to track JIT'd memory allocated to our
-      // anonymous expression -- that way we can free it after executing.
-      auto RT = TheJIT->getMainJITDylib().createResourceTracker();
-
-      auto TSM = llvm::orc::ThreadSafeModule(std::move(TheModule), std::move(TheContext));
-      ExitOnErr(TheJIT->addModule(std::move(TSM), RT));
-      InitializeModuleAndManagers();
-
-      // Search the JIT for the __anon_expr symbol.
-      auto ExprSymbol = ExitOnErr(TheJIT->lookup("__anon_expr"));
-
-      // Get the symbol's address and cast it to the right type (takes no
-      // arguments, returns a double) so we can call it as a native function.
-      double (*FP)() = ExprSymbol.getAddress().toPtr<double (*)()>();
-      fprintf(stderr, "Evaluated to %f\n", FP());
-
-      // Delete the anonymous expression module from the JIT.
-      ExitOnErr(RT->remove());
-    }
+    if (!FnAST->codegen())
+      fprintf(stderr, "Error generating code for top level expr");
   } else {
     // Skip token for error recovery.
     getNextToken();
@@ -513,7 +463,6 @@ void HandleTopLevelExpression() {
 /// top ::= definition | external | expression | ';'
 void MainLoop() {
   while (true) {
-    fprintf(stderr, "ready> ");
     switch (CurTok) {
     case tok_eof:
       return;

@@ -35,17 +35,13 @@ link_directories(${LLVM_LIBRARY_DIRS})
 # Find the libraries that correspond to the LLVM components
 # that we wish to use
 llvm_map_components_to_libnames(llvm_libs 
-            Analysis
-            Core
-            ExecutionEngine
-            InstCombine
-            Object
-            OrcJIT
-            Passes
-            RuntimeDyld
-            ScalarOpts
-            Support
-            native
+                    Core
+                    ExecutionEngine
+                    Object
+                    OrcJIT
+                    Support
+                    TargetParser
+                    native
 )
 message("llvm_libs : " ${llvm_libs})
 target_link_libraries(main PUBLIC ${EXTRA_LIBS} ${llvm_libs})

@@ -30,5 +30,6 @@ enum Token {
 };
 
 int gettok();
+std::string getTokName(int Tok);
 
 #endif

@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include "dbg.h"
 
 //===----------------------------------------------------------------------===//
 // Lexer
@@ -7,17 +8,29 @@
 std::string IdentifierStr; // Filled in if tok_identifier
 double NumVal;             // Filled in if tok_number
 
+static int advance() {
+  int LastChar = getchar();
+
+  if (LastChar == '\n' || LastChar == '\r') {
+    LexLoc.Line++;
+    LexLoc.Col = 0;
+  } else
+    LexLoc.Col++;
+  return LastChar;
+}
+
 /// gettok - Return the next token from standard input.
 int gettok() {
   static int LastChar = ' ';
 
   // Skip any whitespace.
   while (isspace(LastChar))
-    LastChar = getchar();
+    LastChar = advance();
 
+  CurLoc = LexLoc;
   if (isalpha(LastChar)) { // identifier: [a-zA-Z][a-zA-Z0-9]*
     IdentifierStr = LastChar;
-    while (isalnum((LastChar = getchar())))
+    while (isalnum((LastChar = advance())))
       IdentifierStr += LastChar;
 
     if (IdentifierStr == "def")
@@ -47,7 +60,7 @@ int gettok() {
     std::string NumStr;
     do {
       NumStr += LastChar;
-      LastChar = getchar();
+      LastChar = advance();
     } while (isdigit(LastChar) || LastChar == '.');
 
     NumVal = strtod(NumStr.c_str(), nullptr);
@@ -57,7 +70,7 @@ int gettok() {
   if (LastChar == '#') {
     // Comment until end of line.
     do
-      LastChar = getchar();
+      LastChar = advance();
     while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
 
     if (LastChar != EOF)
@@ -70,6 +83,38 @@ int gettok() {
 
   // Otherwise, just return the character as its ascii value.
   int ThisChar = LastChar;
-  LastChar = getchar();
+  LastChar = advance();
   return ThisChar;
+}
+
+std::string getTokName(int Tok) {
+  switch (Tok) {
+  case tok_eof:
+    return "eof";
+  case tok_def:
+    return "def";
+  case tok_extern:
+    return "extern";
+  case tok_identifier:
+    return "identifier";
+  case tok_number:
+    return "number";
+  case tok_if:
+    return "if";
+  case tok_then:
+    return "then";
+  case tok_else:
+    return "else";
+  case tok_for:
+    return "for";
+  case tok_in:
+    return "in";
+  case tok_binary:
+    return "binary";
+  case tok_unary:
+    return "unary";
+  case tok_var:
+    return "var";
+  }
+  return std::string(1, (char)Tok);
 }
